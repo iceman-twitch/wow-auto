@@ -1,24 +1,25 @@
+# -*- coding: utf-8 -*-
 import json
 import os
+import threading
+import asyncio
 from pathlib import Path
+from typing import List, Optional
+
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
-import threading
-import asyncio
-import time
-from typing import List, Optional
+from pynput import keyboard
 
 from wowauto import SequenceRunner  # requires wowauto.py in same folder/project
 
-# default settings folder -> %USERPROFILE%\Documents\wowautopy\settings.json
+# Default settings folder -> %USERPROFILE%\Documents\wowautopy\settings.json
 DEFAULT_SETTINGS_DIR = Path.home() / "Documents" / "wowautopy"
 DEFAULT_SETTINGS_FILE = DEFAULT_SETTINGS_DIR / "settings.json"
 
 
 class BackgroundRunner:
     """Run SequenceRunner in a dedicated thread + asyncio loop so the UI never blocks."""
-
     def __init__(self, json_path: str, selected_sequences: List[str], dry_run: bool = False):
         self.json_path = json_path
         self.selected_sequences = list(selected_sequences)
@@ -27,18 +28,14 @@ class BackgroundRunner:
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stop_event = threading.Event()
-        self._started_event = threading.Event()
         self._exc: Optional[BaseException] = None
 
     def start(self):
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
-        self._started_event.clear()
         self._thread = threading.Thread(target=self._thread_main, daemon=True, name="wautopy-runner")
         self._thread.start()
-        # wait briefly for startup confirmation (non-blocking callers can poll started)
-        self._started_event.wait(2.0)
 
     def _thread_main(self):
         try:
@@ -55,36 +52,27 @@ class BackgroundRunner:
                 pass
 
     async def _main(self):
-        # instantiate SequenceRunner inside this loop/thread
         runner = SequenceRunner(dry_run=self.dry_run)
-        # load file
         runner.load_file(self.json_path)
 
-        # schedule work: start repeating sequences, and one-shots run once
+        # Start repeating sequences; run one-shots once.
         for name in self.selected_sequences:
             seq = runner.data.get(name)
             if isinstance(seq, dict) and float(seq.get("every", 0)) > 0:
-                # start repeating in the runner's loop
                 runner.start_repeating(name)
             else:
-                # run once (non-blocking)
                 asyncio.create_task(runner.run_once(name))
 
-        self._started_event.set()
-
-        # keep running until stop requested
         try:
             while not self._stop_event.is_set():
                 await asyncio.sleep(0.5)
         finally:
-            # request runner to stop repeating tasks and cancel
             try:
                 runner.stop_all()
             except Exception:
                 pass
 
     def stop(self, timeout: float = 2.0):
-        # signal stop and wait for thread to end
         self._stop_event.set()
         if self._loop:
             try:
@@ -96,70 +84,69 @@ class BackgroundRunner:
         return self._exc
 
 
+class GlobalKeyListener:
+    """Global keyboard listener using pynput to detect toggle key anywhere."""
+    def __init__(self, toggle_callback, toggle_key: str = "á"):
+        self.toggle_callback = toggle_callback
+        self.toggle_key = toggle_key.lower()
+        self._listener: Optional[keyboard.Listener] = None
+        
+    def start(self):
+        if self._listener and self._listener.running:
+            return
+        self._listener = keyboard.Listener(on_press=self._on_press)
+        self._listener.start()
+        
+    def stop(self):
+        if self._listener:
+            self._listener.stop()
+            self._listener = None
+            
+    def _on_press(self, key):
+        try:
+            # Handle character keys
+            if hasattr(key, 'char') and key.char:
+                if key.char.lower() == self.toggle_key:
+                    self.toggle_callback()
+                    return
+            # Handle named keys (like Key.f8)
+            key_name = str(key).replace("Key.", "").replace("'", "").lower()
+            if key_name == self.toggle_key:
+                self.toggle_callback()
+        except Exception:
+            pass
+
+
 class SettingsForm(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("WoW Auto - Settings")
-        # slightly larger default size and allow resizing so widgets never get clipped
-        self.geometry("760x520")
+        # Larger default size and resizable so buttons don't get clipped
+        self.geometry("760x540")
         self.resizable(True, True)
 
-        # ensure default settings folder/file exist (attempt to create)
-        try:
-            DEFAULT_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
-            if not DEFAULT_SETTINGS_FILE.exists():
-                default_settings = {
-                    "json_path": "",
-                    "selected_sequences": [],
-                    "toggle_key": "",
-                    "is_running": False,
-                }
-                DEFAULT_SETTINGS_FILE.write_text(json.dumps(default_settings, indent=2), encoding="utf-8")
-        except Exception as e:
-            # can't create folder/file -> inform user and fall back to home folder
-            try:
-                messagebox.showwarning(
-                    "Warning",
-                    f"Could not create settings folder '{DEFAULT_SETTINGS_DIR}': {e}\n"
-                    "Falling back to home folder for settings."
-                )
-            except Exception:
-                pass
-            # fallback
-            fallback = Path.home() / "wautopy"
-            try:
-                fallback.mkdir(parents=True, exist_ok=True)
-                fb_file = fallback / "settings.json"
-                if not fb_file.exists():
-                    fb_file.write_text(json.dumps({
-                        "json_path": "",
-                        "selected_sequences": [],
-                        "toggle_key": "",
-                        "is_running": False,
-                    }, indent=2), encoding="utf-8")
-                # update defaults to fallback
-                global DEFAULT_SETTINGS_DIR, DEFAULT_SETTINGS_FILE
-                DEFAULT_SETTINGS_DIR = fallback
-                DEFAULT_SETTINGS_FILE = fb_file
-            except Exception:
-                # last resort: ignore and continue; saving will fail later with message
-                pass
+        # Instance-level settings paths
+        self.settings_dir: Path = DEFAULT_SETTINGS_DIR
+        self.settings_file: Path = DEFAULT_SETTINGS_FILE
+        self._ensure_settings_location()
 
-        # state
+        # UI state
         self.json_path_var = tk.StringVar()
-        self.save_dir_var = tk.StringVar(value=str(DEFAULT_SETTINGS_DIR))
-        self.sequence_names: list[str] = []
+        self.save_dir_var = tk.StringVar(value=str(self.settings_dir))
+        self.sequence_names: List[str] = []
 
-        # toggle key and running status
-        self.toggle_key_var = tk.StringVar(value="")  # key used to toggle auto mode (e.g. "F8" or "r")
+        # Default toggle key: 'á'
+        self.toggle_key_var = tk.StringVar(value="á")
         self.is_running = False
         self.run_status_var = tk.StringVar(value="Not running")
 
-        # background runner
+        # Background runner
         self._bg_runner: Optional[BackgroundRunner] = None
-        self._bg_exc: Optional[BaseException] = None
+        
+        # Global key listener (will be started after UI is built)
+        self._key_listener: Optional[GlobalKeyListener] = None
 
-        # Widgets
+        # Build UI
         row = 0
         tk.Label(self, text="Select sequence JSON:").grid(column=0, row=row, sticky="w", padx=8, pady=6)
         tk.Entry(self, textvariable=self.json_path_var, width=64).grid(column=0, row=row + 1, columnspan=2, padx=8, sticky="we")
@@ -179,24 +166,26 @@ class SettingsForm(tk.Tk):
         tk.Button(self, text="Open...", command=self.open_save_dir).grid(column=2, row=row + 1, padx=8, sticky="w")
 
         row += 2
-        # Toggle key UI
-        tk.Label(self, text="Toggle key (press while app has focus):").grid(column=0, row=row, sticky="w", padx=8)
+        tk.Label(self, text="Global toggle key (works anywhere):").grid(column=0, row=row, sticky="w", padx=8)
         tk.Entry(self, textvariable=self.toggle_key_var, width=20).grid(column=1, row=row, sticky="w", padx=8)
-        tk.Button(self, text="Set to last key press", command=self._set_last_key).grid(column=2, row=row, sticky="w", padx=8)
+        tk.Button(self, text="Update listener", command=self._restart_global_listener).grid(column=2, row=row, sticky="w", padx=8)
 
         row += 1
-        # Running status and toggle button
         tk.Label(self, text="Auto mode status:").grid(column=0, row=row, sticky="w", padx=8, pady=6)
         self.run_status_label = tk.Label(self, textvariable=self.run_status_var, width=20, anchor="w", fg="red")
         self.run_status_label.grid(column=1, row=row, sticky="w")
         tk.Button(self, text="Toggle Run", command=self.toggle_running, width=12).grid(column=2, row=row, sticky="e", padx=8)
 
         row += 1
-        # Added a label to show background thread state / errors
         tk.Label(self, text="Runner thread:").grid(column=0, row=row, sticky="w", padx=8, pady=6)
         self.thread_status_var = tk.StringVar(value="stopped")
         self.thread_status_label = tk.Label(self, textvariable=self.thread_status_var, width=40, anchor="w")
         self.thread_status_label.grid(column=1, row=row, columnspan=2, sticky="w")
+
+        row += 1
+        tk.Label(self, text="Global listener:").grid(column=0, row=row, sticky="w", padx=8, pady=6)
+        self.listener_status_var = tk.StringVar(value="starting...")
+        tk.Label(self, textvariable=self.listener_status_var, width=40, anchor="w", fg="orange").grid(column=1, row=row, columnspan=2, sticky="w")
 
         row += 1
         tk.Button(self, text="Save settings", command=self.save_settings, width=20).grid(column=0, row=row, padx=8, pady=12, sticky="w")
@@ -206,22 +195,63 @@ class SettingsForm(tk.Tk):
         self.status = tk.Label(self, text="", anchor="w")
         self.status.grid(column=0, row=row + 1, columnspan=3, padx=8, pady=6, sticky="we")
 
-        # track last key pressed for easy set
-        self._last_key_pressed = ""
-        # bind key events while app has focus
-        self.bind_all("<Key>", self._on_keypress)
-
-        # try to preload existing settings
+        # Load existing settings if present
         self.load_existing_settings()
 
-        # start polling UI to reflect thread state
+        # NOW start global listener after all UI vars are created
+        self._start_global_listener()
+
+        # Poll thread state
         self.after(500, self._poll_status)
+
+    def _ensure_settings_location(self):
+        """Ensure settings dir and default file exist; on failure, fall back to home\\wautopy."""
+        try:
+            self.settings_dir.mkdir(parents=True, exist_ok=True)
+            if not self.settings_file.exists():
+                default_settings = {
+                    "json_path": "",
+                    "selected_sequences": [],
+                    "toggle_key": "á",
+                    "is_running": False,
+                }
+                self.settings_file.write_text(json.dumps(default_settings, indent=2), encoding="utf-8")
+        except Exception:
+            fallback = Path.home() / "wautopy"
+            try:
+                fallback.mkdir(parents=True, exist_ok=True)
+                fb_file = fallback / "settings.json"
+                if not fb_file.exists():
+                    fb_file.write_text(json.dumps({
+                        "json_path": "",
+                        "selected_sequences": [],
+                        "toggle_key": "á",
+                        "is_running": False,
+                    }, indent=2), encoding="utf-8")
+                self.settings_dir = fallback
+                self.settings_file = fb_file
+            except Exception:
+                pass
+
+    def _start_global_listener(self):
+        """Start global keyboard listener."""
+        toggle_key = self.toggle_key_var.get().strip() or "á"
+        self._key_listener = GlobalKeyListener(self.toggle_running, toggle_key)
+        self._key_listener.start()
+        self.listener_status_var.set("running")
+        self.status.config(text=f"Global hotkey listener active. Press '{toggle_key}' anywhere to toggle.")
+
+    def _restart_global_listener(self):
+        """Restart listener with new toggle key."""
+        if self._key_listener:
+            self._key_listener.stop()
+        self._start_global_listener()
+        self.status.config(text=f"Global listener restarted. Toggle key: {self.toggle_key_var.get()}")
 
     def browse_json(self):
         p = filedialog.askopenfilename(title="Select JSON file", filetypes=[("JSON files", "*.json"), ("All files", "*.*")])
         if p:
             self.json_path_var.set(p)
-            # auto-load sequences
             self.load_sequences()
 
     def load_sequences(self):
@@ -239,8 +269,6 @@ class SettingsForm(tk.Tk):
             messagebox.showerror("Error", f"Failed to parse JSON: {e}")
             return
 
-        # determine sequences
-        seqs = []
         if isinstance(payload, dict) and "sequences" in payload and isinstance(payload["sequences"], dict):
             seqs = list(payload["sequences"].keys())
         elif isinstance(payload, dict):
@@ -258,7 +286,7 @@ class SettingsForm(tk.Tk):
         self.status.config(text=f"Loaded {len(seqs)} sequence(s) from file.")
 
     def open_save_dir(self):
-        folder = Path(self.save_dir_var.get())
+        folder = Path(self.save_dir_var.get()).expanduser()
         try:
             folder.mkdir(parents=True, exist_ok=True)
         except Exception as e:
@@ -270,12 +298,11 @@ class SettingsForm(tk.Tk):
             messagebox.showinfo("Info", f"Settings folder: {folder}")
 
     def save_settings(self):
-        # gather selected sequences
         selected = [self.sequence_names[i] for i in self.listbox.curselection()] if self.sequence_names else []
         settings = {
             "json_path": self.json_path_var.get().strip(),
             "selected_sequences": selected,
-            "toggle_key": self.toggle_key_var.get().strip(),
+            "toggle_key": self.toggle_key_var.get().strip() or "á",
             "is_running": self.is_running,
         }
         save_dir = Path(self.save_dir_var.get()).expanduser()
@@ -301,47 +328,40 @@ class SettingsForm(tk.Tk):
             self._on_close()
 
     def load_existing_settings(self):
-        # try default settings locations
-        candidates = [DEFAULT_SETTINGS_FILE, DEFAULT_SETTINGS_DIR / "settings.json"]
+        candidates = [self.settings_file, self.settings_dir / "settings.json"]
         for c in candidates:
             if c.exists():
                 try:
                     data = json.loads(c.read_text(encoding="utf-8"))
                     json_path = data.get("json_path", "")
                     sel = data.get("selected_sequences", [])
-                    toggle = data.get("toggle_key", "")
+                    toggle = data.get("toggle_key", "á")
                     is_running = data.get("is_running", False)
                     if json_path:
                         self.json_path_var.set(json_path)
                         self.load_sequences()
-                        # select sequences if present
                         for i, name in enumerate(self.sequence_names):
                             if name in sel:
                                 self.listbox.selection_set(i)
-                    # set toggle key and running status
-                    self.toggle_key_var.set(str(toggle))
+                    self.toggle_key_var.set(str(toggle) if str(toggle) else "á")
                     self.is_running = bool(is_running)
                     self._update_run_status()
-                    # set save dir to parent of loaded settings
                     self.save_dir_var.set(str(c.parent))
                     self.status.config(text=f"Loaded settings from {c}")
                 except Exception:
                     pass
                 break
 
-    # new: toggle running state
     def toggle_running(self):
         if not self.is_running:
-            # start background runner
             json_path = self.json_path_var.get().strip()
             if not json_path:
-                messagebox.showinfo("Info", "Please select a JSON file first.")
+                self.status.config(text="Error: Please select a JSON file first.")
                 return
             selected = [self.sequence_names[i] for i in self.listbox.curselection()] if self.sequence_names else []
             if not selected:
-                messagebox.showinfo("Info", "Please select at least one sequence to run.")
+                self.status.config(text="Error: Please select at least one sequence to run.")
                 return
-            # save settings before starting
             self.save_settings()
             try:
                 self._bg_runner = BackgroundRunner(json_path=json_path, selected_sequences=selected, dry_run=False)
@@ -349,10 +369,10 @@ class SettingsForm(tk.Tk):
                 self.is_running = True
                 self._update_run_status()
                 self.thread_status_var.set("running")
+                self.status.config(text="Auto mode started! Press toggle key to stop.")
             except Exception as e:
-                messagebox.showerror("Error", f"Failed to start runner: {e}")
+                self.status.config(text=f"Failed to start runner: {e}")
         else:
-            # stop background runner
             try:
                 exc = None
                 if self._bg_runner:
@@ -362,9 +382,11 @@ class SettingsForm(tk.Tk):
                 self._update_run_status()
                 self.thread_status_var.set("stopped")
                 if exc:
-                    messagebox.showerror("Runner error", f"Background runner raised: {exc}")
+                    self.status.config(text=f"Runner stopped with error: {exc}")
+                else:
+                    self.status.config(text="Auto mode stopped.")
             except Exception as e:
-                messagebox.showerror("Error", f"Failed to stop runner: {e}")
+                self.status.config(text=f"Failed to stop runner: {e}")
 
     def _update_run_status(self):
         if self.is_running:
@@ -374,58 +396,32 @@ class SettingsForm(tk.Tk):
             self.run_status_var.set("Not running")
             self.run_status_label.config(fg="red")
 
-    # record last key pressed and use it for quick set
-    def _on_keypress(self, event: tk.Event):
-        # event.keysym is e.g. 'F8', 'r', 'Return'
-        ks = getattr(event, "keysym", "")
-        if not ks:
-            return
-        self._last_key_pressed = ks
-        # if the pressed key matches configured toggle key -> toggle running
-        cfg = self.toggle_key_var.get().strip()
-        if cfg and ks.lower() == cfg.lower():
-            # avoid toggling while typing in entries: check focus widget class
-            fw = self.focus_get()
-            if isinstance(fw, tk.Entry):
-                return
-            self.toggle_running()
-
-    def _set_last_key(self):
-        if self._last_key_pressed:
-            self.toggle_key_var.set(self._last_key_pressed)
-            self.status.config(text=f"Toggle key set to: {self._last_key_pressed}")
-        else:
-            self.status.config(text="No key press recorded yet. Click inside the window and press a key to record it.")
-
     def _poll_status(self):
-        # update thread status and detect background exceptions
         if self._bg_runner and self._bg_runner._thread:
             t = self._bg_runner._thread
             if t.is_alive():
                 self.thread_status_var.set("running")
             else:
                 self.thread_status_var.set("stopped")
-                # check for exception
                 if self._bg_runner._exc:
                     self.thread_status_var.set("error")
-                    messagebox.showerror("Runner error", f"Background runner failed: {self._bg_runner._exc}")
+                    self.status.config(text=f"Background runner failed: {self._bg_runner._exc}")
                     self._bg_runner = None
                     self.is_running = False
                     self._update_run_status()
         else:
             self.thread_status_var.set("stopped")
-        # schedule next poll
         self.after(500, self._poll_status)
 
     def _on_close(self):
-        # ensure background runner stopped before exiting
+        if self._key_listener:
+            self._key_listener.stop()
         if self._bg_runner:
             try:
                 self._bg_runner.stop(timeout=1.0)
             except Exception:
                 pass
             self._bg_runner = None
-        # save settings on close
         try:
             self.save_settings()
         except Exception:
