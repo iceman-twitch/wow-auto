@@ -169,23 +169,24 @@ class SequenceRunner:
                 clicks = int(act.get("clicks", 1))
                 interval = float(act.get("interval", 0.0))
                 
-                # Add human-like delay before mouse action: 0.05-0.09s
-                pre_delay = random.uniform(0.05, 0.09)
-                if not self.dry_run:
-                    await asyncio.sleep(pre_delay)
-                
                 if self.dry_run:
-                    print(f"[dry] mouse {action} {btn} to ({x},{y}) clicks={clicks} (pre-delay: {pre_delay:.3f}s)")
+                    print(f"[dry] mouse {action} {btn} to ({x},{y}) clicks={clicks}")
                 else:
-                    # Only move mouse if coordinates are different from last position
+                    # Step 1: Move mouse if needed (without clicking yet)
+                    mouse_moved = False
                     if x is not None and y is not None:
                         current_pos = (int(x), int(y))
                         if self._last_mouse_pos != current_pos:
                             self.ms.position = current_pos
                             self._last_mouse_pos = current_pos
-                            # Small delay after mouse movement
-                            await asyncio.sleep(random.uniform(0.01, 0.03))
+                            mouse_moved = True
                     
+                    # Step 2: If mouse was moved, wait 0.05-0.09s before clicking (human reaction time)
+                    if mouse_moved:
+                        move_settle_delay = random.uniform(0.05, 0.09)
+                        await asyncio.sleep(move_settle_delay)
+                    
+                    # Step 3: Now perform the mouse action (click, hold, etc.)
                     if action == "click":
                         for i in range(clicks):
                             self.ms.press(btn)
