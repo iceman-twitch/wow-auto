@@ -1,5 +1,6 @@
 import json
 import asyncio
+import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -91,6 +92,7 @@ class SequenceRunner:
         self.dry_run = dry_run
         self.data: Dict[str, Any] = {}
         self._tasks: Dict[str, asyncio.Task] = {}
+        self._last_mouse_pos: Optional[tuple] = None  # Track last mouse position
         if not dry_run:
             if KeyboardController is None or MouseController is None:
                 raise RuntimeError("pynput is required. Install with: pip install pynput")
@@ -122,29 +124,40 @@ class SequenceRunner:
             atype = str(act.get("type", "key")).lower()
             if atype == "wait":
                 secs = float(act.get("seconds", 0))
+                # Add randomness: ±10% variation
+                secs_random = secs * random.uniform(0.9, 1.1)
                 if self.dry_run:
-                    print(f"[dry] wait {secs}s")
+                    print(f"[dry] wait {secs_random:.3f}s (original: {secs}s)")
                 else:
-                    await asyncio.sleep(secs)
+                    await asyncio.sleep(secs_random)
                 continue
 
             if atype == "key":
                 action = str(act.get("action", "press")).lower()
                 key_raw = act.get("key")
                 key = _parse_key(key_raw)
+                
+                # Add human-like delay before key action: 0.05-0.09s
+                pre_delay = random.uniform(0.05, 0.09)
+                if not self.dry_run:
+                    await asyncio.sleep(pre_delay)
+                
                 if self.dry_run:
-                    print(f"[dry] key {action} {key_raw}")
+                    print(f"[dry] key {action} {key_raw} (pre-delay: {pre_delay:.3f}s)")
                 else:
                     if action == "press":
-                        self.kb.press(key); self.kb.release(key)
+                        self.kb.press(key)
+                        await asyncio.sleep(random.uniform(0.01, 0.03))  # key hold time
+                        self.kb.release(key)
                     elif action == "down":
                         self.kb.press(key)
                     elif action == "up":
                         self.kb.release(key)
                     elif action == "hold":
                         dur = float(act.get("duration", 0))
+                        dur_random = dur * random.uniform(0.9, 1.1)
                         self.kb.press(key)
-                        await asyncio.sleep(dur)
+                        await asyncio.sleep(dur_random)
                         self.kb.release(key)
                     else:
                         raise ValueError(f"Unknown key action: {action}")
@@ -155,23 +168,45 @@ class SequenceRunner:
                 x = act.get("x"); y = act.get("y")
                 clicks = int(act.get("clicks", 1))
                 interval = float(act.get("interval", 0.0))
+                
+                # Add human-like delay before mouse action: 0.05-0.09s
+                pre_delay = random.uniform(0.05, 0.09)
+                if not self.dry_run:
+                    await asyncio.sleep(pre_delay)
+                
                 if self.dry_run:
-                    print(f"[dry] mouse {action} {btn} to ({x},{y}) clicks={clicks}")
+                    print(f"[dry] mouse {action} {btn} to ({x},{y}) clicks={clicks} (pre-delay: {pre_delay:.3f}s)")
                 else:
+                    # Only move mouse if coordinates are different from last position
                     if x is not None and y is not None:
-                        self.ms.position = (int(x), int(y))
+                        current_pos = (int(x), int(y))
+                        if self._last_mouse_pos != current_pos:
+                            self.ms.position = current_pos
+                            self._last_mouse_pos = current_pos
+                            # Small delay after mouse movement
+                            await asyncio.sleep(random.uniform(0.01, 0.03))
+                    
                     if action == "click":
                         for i in range(clicks):
-                            self.ms.press(btn); self.ms.release(btn)
+                            self.ms.press(btn)
+                            await asyncio.sleep(random.uniform(0.01, 0.03))  # click hold time
+                            self.ms.release(btn)
                             if interval and i < clicks - 1:
-                                await asyncio.sleep(interval)
+                                interval_random = interval * random.uniform(0.9, 1.1)
+                                await asyncio.sleep(interval_random)
+                            elif i < clicks - 1:
+                                # Small delay between clicks even without explicit interval
+                                await asyncio.sleep(random.uniform(0.05, 0.09))
                     elif action == "down":
                         self.ms.press(btn)
                     elif action == "up":
                         self.ms.release(btn)
                     elif action == "hold":
                         dur = float(act.get("duration", 0))
-                        self.ms.press(btn); await asyncio.sleep(dur); self.ms.release(btn)
+                        dur_random = dur * random.uniform(0.9, 1.1)
+                        self.ms.press(btn)
+                        await asyncio.sleep(dur_random)
+                        self.ms.release(btn)
                     else:
                         raise ValueError(f"Unknown mouse action: {action}")
 
@@ -187,7 +222,8 @@ class SequenceRunner:
                     i += 1
                     if every <= 0:
                         break
-                    await asyncio.sleep(every)
+                    every_random = every * random.uniform(0.9, 1.1)
+                    await asyncio.sleep(every_random)
 
             else:
                 if self.dry_run:
@@ -195,20 +231,23 @@ class SequenceRunner:
                 else:
                     raise ValueError(f"Unknown action type: {atype}")
 
-            # per-action delay
+            # per-action delay with randomness: delay to delay*1.1
             delay = float(act.get("delay", 0))
             if delay:
+                delay_random = delay * random.uniform(1.0, 1.1)
                 if self.dry_run:
-                    print(f"[dry] sleep {delay}s")
+                    print(f"[dry] sleep {delay_random:.3f}s (original delay: {delay}s)")
                 else:
-                    await asyncio.sleep(delay)
+                    await asyncio.sleep(delay_random)
 
     async def _periodic_worker(self, name: str, interval: float, actions: List[Dict[str, Any]]):
-        # Run first immediately, then wait interval repeatedly
+        # Run first immediately, then wait interval repeatedly with randomness
         try:
             while True:
                 await self._run_actions_once(actions)
-                await asyncio.sleep(interval)
+                # Add randomness to periodic interval: ±10%
+                interval_random = interval * random.uniform(0.9, 1.1)
+                await asyncio.sleep(interval_random)
         except asyncio.CancelledError:
             # clean up if needed
             return
