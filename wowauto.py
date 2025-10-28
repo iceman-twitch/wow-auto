@@ -1,7 +1,6 @@
 import json
 import asyncio
 import random
-import win32gui
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 

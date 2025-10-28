@@ -30,6 +30,7 @@ if exist requirements.txt (
     echo requests==2.31.0 >> requirements.txt
     echo urllib3==1.26.16 >> requirements.txt
     echo pywin32==306 >> requirements.txt
+    
     echo keyboard==0.13.5 >> requirements.txt
     echo mouse==0.7.1 >> requirements.txt
     echo pynput==1.7.6 >> requirements.txt

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 
 from pynput import keyboard
 
@@ -108,22 +108,24 @@ class GlobalKeyListener:
             if hasattr(key, 'char') and key.char:
                 if key.char.lower() == self.toggle_key:
                     self.toggle_callback()
-                    return
+                    return False  # Suppress the key
             # Handle named keys (like Key.f8)
             key_name = str(key).replace("Key.", "").replace("'", "").lower()
             if key_name == self.toggle_key:
                 self.toggle_callback()
+                return False  # Suppress the key
         except Exception:
             pass
+        return True  # Allow other keys to pass through
 
 
 class SettingsForm(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("WoW Auto - Settings")
-        # Larger default size and resizable so buttons don't get clipped
-        self.geometry("760x540")
-        self.resizable(True, True)
+        # Smaller default size and resizable
+        self.geometry("500x490")
+        self.resizable(False, False)
 
         # Instance-level settings paths
         self.settings_dir: Path = DEFAULT_SETTINGS_DIR
@@ -157,8 +159,21 @@ class SettingsForm(tk.Tk):
 
         row += 1
         tk.Label(self, text="Sequences (select one or more):").grid(column=0, row=row, sticky="w", padx=8)
-        self.listbox = tk.Listbox(self, selectmode=tk.MULTIPLE, width=80, height=10)
-        self.listbox.grid(column=0, row=row + 1, columnspan=3, padx=8, sticky="we")
+        
+        # Create frame for listbox with scrollbar
+        listbox_frame = tk.Frame(self)
+        listbox_frame.grid(column=0, row=row + 1, columnspan=3, padx=8, pady=4, sticky="we")
+        listbox_frame.grid_rowconfigure(0, weight=1)
+        listbox_frame.grid_columnconfigure(0, weight=1)
+        
+        # Listbox with smaller height
+        self.listbox = tk.Listbox(listbox_frame, selectmode=tk.MULTIPLE, width=80, height=6)
+        self.listbox.grid(row=0, column=0, sticky="nsew")
+        
+        # Scrollbar for listbox
+        scrollbar = ttk.Scrollbar(listbox_frame, orient="vertical", command=self.listbox.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.listbox.configure(yscrollcommand=scrollbar.set)
 
         row += 2
         tk.Label(self, text="Settings save folder:").grid(column=0, row=row, sticky="w", padx=8, pady=6)
@@ -194,6 +209,9 @@ class SettingsForm(tk.Tk):
 
         self.status = tk.Label(self, text="", anchor="w")
         self.status.grid(column=0, row=row + 1, columnspan=3, padx=8, pady=6, sticky="we")
+
+        # Configure column weights for resizing
+        self.grid_columnconfigure(0, weight=1)
 
         # Load existing settings if present
         self.load_existing_settings()
