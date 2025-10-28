@@ -1,6 +1,7 @@
 import json
 import asyncio
 import random
+import win32gui
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -37,22 +38,107 @@ def _parse_key(key_str: str):
         "right": Key.right,
         "up": Key.up,
         "down": Key.down,
+        # Arrow keys with multiple aliases
+        "leftarrow": Key.left,
+        "left_arrow": Key.left,
+        "arrow_left": Key.left,
+        "rightarrow": Key.right,
+        "right_arrow": Key.right,
+        "arrow_right": Key.right,
+        "uparrow": Key.up,
+        "up_arrow": Key.up,
+        "arrow_up": Key.up,
+        "downarrow": Key.down,
+        "down_arrow": Key.down,
+        "arrow_down": Key.down,
+        # Home/End/PageUp/PageDown
+        "home": Key.home,
+        "end": Key.end,
+        "pageup": Key.page_up,
+        "page_up": Key.page_up,
+        "pgup": Key.page_up,
+        "pagedown": Key.page_down,
+        "page_down": Key.page_down,
+        "pgdn": Key.page_down,
+        # Insert/Print Screen
+        "insert": Key.insert,
+        "ins": Key.insert,
+        "printscreen": Key.print_screen,
+        "print_screen": Key.print_screen,
+        "prtsc": Key.print_screen,
+        # Function keys (F1-F12)
+        "f1": Key.f1,
+        "f2": Key.f2,
+        "f3": Key.f3,
+        "f4": Key.f4,
+        "f5": Key.f5,
+        "f6": Key.f6,
+        "f7": Key.f7,
+        "f8": Key.f8,
+        "f9": Key.f9,
+        "f10": Key.f10,
+        "f11": Key.f11,
+        "f12": Key.f12,
+        # Numpad keys
+        "num0": Key.num_lock,  # This is actually num_lock, fixing below
+        "num1": Key.num_lock,  # These need to be fixed
+        "num2": Key.num_lock,
+        "num3": Key.num_lock,
+        "num4": Key.num_lock,
+        "num5": Key.num_lock,
+        "num6": Key.num_lock,
+        "num7": Key.num_lock,
+        "num8": Key.num_lock,
+        "num9": Key.num_lock,
+        "numlock": Key.num_lock,
+        "num_lock": Key.num_lock,
+        # Basic letter keys
         "w": KeyCode.from_char("w"),
         "a": KeyCode.from_char("a"),
         "s": KeyCode.from_char("s"),
         "d": KeyCode.from_char("d"),
     }
+    
+    # Handle numpad keys properly
+    numpad_keys = {
+        "numpad0": KeyCode.from_vk(96),
+        "numpad1": KeyCode.from_vk(97),
+        "numpad2": KeyCode.from_vk(98),
+        "numpad3": KeyCode.from_vk(99),
+        "numpad4": KeyCode.from_vk(100),
+        "numpad5": KeyCode.from_vk(101),
+        "numpad6": KeyCode.from_vk(102),
+        "numpad7": KeyCode.from_vk(103),
+        "numpad8": KeyCode.from_vk(104),
+        "numpad9": KeyCode.from_vk(105),
+        "num0": KeyCode.from_vk(96),
+        "num1": KeyCode.from_vk(97),
+        "num2": KeyCode.from_vk(98),
+        "num3": KeyCode.from_vk(99),
+        "num4": KeyCode.from_vk(100),
+        "num5": KeyCode.from_vk(101),
+        "num6": KeyCode.from_vk(102),
+        "num7": KeyCode.from_vk(103),
+        "num8": KeyCode.from_vk(104),
+        "num9": KeyCode.from_vk(105),
+    }
+    
+    # Check simple keys first
     if s in simple:
         return simple[s]
+    
+    # Check numpad keys
+    if s in numpad_keys:
+        return numpad_keys[s]
+    
+    # Single character keys
     if len(s) == 1:
         return KeyCode.from_char(s)
-    # F-keys: only accept two-character names like 'f1'..'f9' (require length == 2)
-    if s.startswith("f") and len(s) >= 2 and s[1].isdigit():
-        if hasattr(Key, s):
-            return getattr(Key, s)
-    # F-keys, numpad etc. try attribute on Key for any other named key
+    
+    # F-keys: try attribute on Key for any other named key
     if hasattr(Key, s):
         return getattr(Key, s)
+    
     return key_str
 
 
@@ -63,9 +149,19 @@ def _parse_button(btn_str: Optional[str]):
     return {"left": Button.left, "right": Button.right, "middle": Button.middle}.get(m, Button.left)
 
 
+def _get_active_window_title() -> str:
+    """Get the title of the currently active window."""
+    try:
+        hwnd = win32gui.GetForegroundWindow()
+        return win32gui.GetWindowText(hwnd)
+    except Exception:
+        return ""
+
+
 class SequenceRunner:
     """
     Load JSON sequence definitions and run them. Supports periodic runs.
+    Only runs when World of Warcraft is the active window.
 
     JSON formats supported:
     1) sequences map: {"sequences": { "name": [actions] , "name2": {"every": 12, "actions":[...] } } }
@@ -73,10 +169,17 @@ class SequenceRunner:
 
     Actions examples:
       {"type":"key","action":"press","key":"a"}          # press (down+up)
+      {"type":"key","action":"press","key":"left"}       # left arrow key
+      {"type":"key","action":"press","key":"up_arrow"}   # up arrow key
+      {"type":"key","action":"press","key":"f1"}         # F1 function key
+      {"type":"key","action":"press","key":"numpad5"}    # numpad 5
+      {"type":"key","action":"press","key":"a","chance":50}  # 50% chance to press
+      {"type":"key","action":"press","key":"a","duration":2.5}  # hold for exactly 2.5 seconds (no randomness)
       {"type":"key","action":"down","key":"shift"}
       {"type":"key","action":"up","key":"shift"}
       {"type":"key","action":"hold","key":"space","duration":0.2}
       {"type":"mouse","action":"click","button":"left","x":100,"y":200}
+      {"type":"mouse","action":"click","button":"left","x":100,"y":200,"chance":75}  # 75% chance to click
       {"type":"wait","seconds":1.5}
       {"type":"repeat","every":12, "actions":[ ... ]}    # can be used inline but better defined as a sequence with every
     Useful for: press '2' every 12s and press 'r' every 10min:
@@ -93,6 +196,8 @@ class SequenceRunner:
         self.data: Dict[str, Any] = {}
         self._tasks: Dict[str, asyncio.Task] = {}
         self._last_mouse_pos: Optional[tuple] = None  # Track last mouse position
+        self._window_check_interval = 1.0  # Check window every 1 second
+        self._target_window_titles = ["World of Warcraft"]  # List of valid window titles
         if not dry_run:
             if KeyboardController is None or MouseController is None:
                 raise RuntimeError("pynput is required. Install with: pip install pynput")
@@ -101,6 +206,29 @@ class SequenceRunner:
         else:
             self.kb = None
             self.ms = None
+
+    def _is_target_window_active(self) -> bool:
+        """Check if World of Warcraft is the active window."""
+        try:
+            current_title = _get_active_window_title()
+            for target in self._target_window_titles:
+                if target.lower() in current_title.lower():
+                    return True
+            return False
+        except Exception:
+            return False
+
+    def _check_chance(self, action: Dict[str, Any]) -> bool:
+        """Check if action should execute based on chance (1-100). Returns True if no chance specified."""
+        chance = action.get("chance")
+        if chance is None:
+            return True
+        chance = int(chance)
+        if chance <= 0:
+            return False
+        if chance >= 100:
+            return True
+        return random.randint(1, 100) <= chance
 
     def load_file(self, path: str) -> List[str]:
         p = Path(path)
@@ -121,13 +249,31 @@ class SequenceRunner:
 
     async def _run_actions_once(self, actions: List[Dict[str, Any]]):
         for act in actions:
+            # Check if WoW is still active before each action
+            if not self.dry_run and not self._is_target_window_active():
+                if self.dry_run:
+                    print("[dry] World of Warcraft not active - pausing sequence")
+                # Wait for WoW to become active again
+                while not self._is_target_window_active():
+                    await asyncio.sleep(self._window_check_interval)
+                if self.dry_run:
+                    print("[dry] World of Warcraft active again - resuming sequence")
+
+            # Check chance - skip action if chance fails
+            if not self._check_chance(act):
+                if self.dry_run:
+                    chance = act.get("chance", 100)
+                    print(f"[dry] skipping action due to chance ({chance}%)")
+                continue
+
             atype = str(act.get("type", "key")).lower()
             if atype == "wait":
                 secs = float(act.get("seconds", 0))
                 # Add randomness: ±10% variation
                 secs_random = secs * random.uniform(0.9, 1.1)
                 if self.dry_run:
-                    print(f"[dry] wait {secs_random:.3f}s (original: {secs}s)")
+                    chance = act.get("chance", 100)
+                    print(f"[dry] wait {secs_random:.3f}s (original: {secs}s) [chance: {chance}%]")
                 else:
                     await asyncio.sleep(secs_random)
                 continue
@@ -136,6 +282,7 @@ class SequenceRunner:
                 action = str(act.get("action", "press")).lower()
                 key_raw = act.get("key")
                 key = _parse_key(key_raw)
+                duration = act.get("duration")  # Exact duration if specified
                 
                 # Add human-like delay before key action: 0.05-0.09s
                 pre_delay = random.uniform(0.05, 0.09)
@@ -143,21 +290,33 @@ class SequenceRunner:
                     await asyncio.sleep(pre_delay)
                 
                 if self.dry_run:
-                    print(f"[dry] key {action} {key_raw} (pre-delay: {pre_delay:.3f}s)")
+                    chance = act.get("chance", 100)
+                    duration_info = f" duration={duration}s" if duration else ""
+                    print(f"[dry] key {action} {key_raw} (pre-delay: {pre_delay:.3f}s){duration_info} [chance: {chance}%]")
                 else:
                     if action == "press":
                         self.kb.press(key)
-                        await asyncio.sleep(random.uniform(0.01, 0.03))  # key hold time
+                        if duration is not None:
+                            # Use exact duration (no randomness)
+                            await asyncio.sleep(float(duration))
+                        else:
+                            # Use random key hold time
+                            await asyncio.sleep(random.uniform(0.01, 0.03))
                         self.kb.release(key)
                     elif action == "down":
                         self.kb.press(key)
                     elif action == "up":
                         self.kb.release(key)
                     elif action == "hold":
-                        dur = float(act.get("duration", 0))
-                        dur_random = dur * random.uniform(0.9, 1.1)
+                        if duration is not None:
+                            # Use exact duration (no randomness)
+                            dur = float(duration)
+                        else:
+                            # Fall back to old behavior with randomness
+                            dur = float(act.get("duration", 0))
+                            dur = dur * random.uniform(0.9, 1.1)
                         self.kb.press(key)
-                        await asyncio.sleep(dur_random)
+                        await asyncio.sleep(dur)
                         self.kb.release(key)
                     else:
                         raise ValueError(f"Unknown key action: {action}")
@@ -168,9 +327,12 @@ class SequenceRunner:
                 x = act.get("x"); y = act.get("y")
                 clicks = int(act.get("clicks", 1))
                 interval = float(act.get("interval", 0.0))
+                duration = act.get("duration")  # Exact duration if specified
                 
                 if self.dry_run:
-                    print(f"[dry] mouse {action} {btn} to ({x},{y}) clicks={clicks}")
+                    chance = act.get("chance", 100)
+                    duration_info = f" duration={duration}s" if duration else ""
+                    print(f"[dry] mouse {action} {btn} to ({x},{y}) clicks={clicks}{duration_info} [chance: {chance}%]")
                 else:
                     # Step 1: Move mouse if needed (without clicking yet)
                     mouse_moved = False
@@ -190,7 +352,12 @@ class SequenceRunner:
                     if action == "click":
                         for i in range(clicks):
                             self.ms.press(btn)
-                            await asyncio.sleep(random.uniform(0.01, 0.03))  # click hold time
+                            if duration is not None:
+                                # Use exact duration (no randomness)
+                                await asyncio.sleep(float(duration))
+                            else:
+                                # Use random click hold time
+                                await asyncio.sleep(random.uniform(0.01, 0.03))
                             self.ms.release(btn)
                             if interval and i < clicks - 1:
                                 interval_random = interval * random.uniform(0.9, 1.1)
@@ -203,10 +370,15 @@ class SequenceRunner:
                     elif action == "up":
                         self.ms.release(btn)
                     elif action == "hold":
-                        dur = float(act.get("duration", 0))
-                        dur_random = dur * random.uniform(0.9, 1.1)
+                        if duration is not None:
+                            # Use exact duration (no randomness)
+                            dur = float(duration)
+                        else:
+                            # Fall back to old behavior with randomness
+                            dur = float(act.get("duration", 0))
+                            dur = dur * random.uniform(0.9, 1.1)
                         self.ms.press(btn)
-                        await asyncio.sleep(dur_random)
+                        await asyncio.sleep(dur)
                         self.ms.release(btn)
                     else:
                         raise ValueError(f"Unknown mouse action: {action}")
@@ -228,7 +400,8 @@ class SequenceRunner:
 
             else:
                 if self.dry_run:
-                    print(f"[dry] unknown action type: {atype}")
+                    chance = act.get("chance", 100)
+                    print(f"[dry] unknown action type: {atype} [chance: {chance}%]")
                 else:
                     raise ValueError(f"Unknown action type: {atype}")
 
@@ -245,7 +418,14 @@ class SequenceRunner:
         # Run first immediately, then wait interval repeatedly with randomness
         try:
             while True:
-                await self._run_actions_once(actions)
+                # Only run if World of Warcraft is active
+                if self.dry_run or self._is_target_window_active():
+                    await self._run_actions_once(actions)
+                else:
+                    # Wait for WoW to become active
+                    while not self._is_target_window_active():
+                        await asyncio.sleep(self._window_check_interval)
+                
                 # Add randomness to periodic interval: ±10%
                 interval_random = interval * random.uniform(0.9, 1.1)
                 await asyncio.sleep(interval_random)
@@ -329,19 +509,19 @@ if __name__ == "__main__":
     #     "press_2_every_12s": {
     #       "every": 12,
     #       "actions": [
-    #         {"type":"key","action":"press","key":"2"}
+    #         {"type":"key","action":"press","key":"2","chance":75}
     #       ]
     #     },
     #     "press_r_every_10min": {
     #       "every": 600,
     #       "actions": [
-    #         {"type":"key","action":"press","key":"r"}
+    #         {"type":"key","action":"press","key":"r","duration":1.5}
     #       ]
     #     },
     #     "wasd_example": [
-    #       {"type":"key","action":"press","key":"w"},
+    #       {"type":"key","action":"press","key":"w","chance":90,"duration":0.5},
     #       {"type":"wait","seconds":0.1},
-    #       {"type":"key","action":"press","key":"a"},
+    #       {"type":"key","action":"press","key":"a","chance":50},
     #       {"type":"wait","seconds":0.1},
     #       {"type":"key","action":"press","key":"s"},
     #       {"type":"wait","seconds":0.1},
