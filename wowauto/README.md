@@ -13,7 +13,30 @@ A powerful JSON-based automation system for World of Warcraft that only runs whe
 - 🔁 **Periodic Sequences**: Run actions every N seconds automatically
 - 🌐 **Async Support**: Multiple sequences run concurrently
 
-## 📝 JSON Format
+## � Setup & Running
+
+### First Time Setup
+1. **Build the environment** (only needed once):
+   ```cmd
+   env.bat
+   ```
+   This creates the virtual environment and installs all dependencies.
+
+### Running the Application
+2. **Run the test version**:
+   ```cmd
+   test.bat
+   ```
+   This activates the virtual environment and launches the GUI interface.
+
+### Manual Python Execution
+If you prefer to run Python commands manually:
+```cmd
+env\Scripts\activate
+python formauto.py
+```
+
+## �📝 JSON Format
 
 ### Basic Key Press
 ```json
