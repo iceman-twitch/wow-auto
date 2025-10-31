@@ -1,5 +1,7 @@
 credentials.json
 twitch_chat.txt
+screenshots/
+wow_ai_model.pth
 env/
 env
 dist/

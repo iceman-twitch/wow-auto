@@ -1,0 +1,8 @@
+/script local mapID=C_Map.GetBestMapForUnit("player") if mapID then local pos=C_Map.GetPlayerMapPosition(mapID,"player") if pos then print(string.format("Coordinates: %.3f, %.3f", pos.x*100, pos.y*100)) end end
+
+// Starting 
+position
+X=20.624, Y=28.733, A=0.000
+
+// Before gate 
+X=21.006, Y=28.217, A=0.000
