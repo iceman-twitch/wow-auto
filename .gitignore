@@ -46,4 +46,3 @@ nosetests.xml
 coverage.xml
 *.spec 
 *.json
-*.txt
