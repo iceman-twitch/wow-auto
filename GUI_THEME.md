@@ -228,6 +228,64 @@ COLORS = {
 }
 ```
 
+### 🎮 Always-On-Top Control Panel
+
+#### Overview
+A transparent, borderless overlay window that stays above all applications (including WoW) for instant automation control.
+
+#### Features
+
+**Visual Design:**
+- **No Title Bar**: Borderless window using `overrideredirect(True)`
+- **Semi-Transparent**: 95% opacity with transparent background
+- **Rounded Panel**: Dark brown background panel with 15px rounded corners
+- **Title Header**: "⚔️ WoW Auto Control" in gold text
+- **Draggable**: Click and drag from title area to reposition anywhere
+
+**Control Buttons:**
+
+1. **START Button** (Left)
+   - Green (`#22c55e`) when enabled
+   - Gray (`#666666`) when disabled (already running)
+   - Hover effect: Darker green (`#16a34a`)
+   - Icon: ▶️ START
+   - Click to begin automation
+
+2. **STOP Button** (Right)
+   - Red (`#ef4444`) when enabled (running)
+   - Gray (`#666666`) when disabled (not running)
+   - Hover effect: Darker red (`#dc2626`)
+   - Icon: ⏹️ STOP
+   - Click to halt automation
+
+**Behavior:**
+- Always visible above all windows
+- Shows at startup in top-right corner
+- Can be repositioned by dragging
+- Buttons dynamically enable/disable based on running state
+- Works independently of main GUI window
+- Persists position across sessions
+
+**Technical Details:**
+```python
+# Window positioning
+Position: Top-right corner (20px margins)
+Size: 280x80 pixels
+Attributes: -topmost, -alpha 0.95, -transparentcolor
+
+# State Management
+- is_running: bool - tracks automation state
+- _update_buttons() - refreshes button appearance
+- Callbacks sync with main GUI
+```
+
+**Usage:**
+1. Window appears automatically when app starts
+2. Click START when ready to begin automation
+3. Click STOP to pause/halt sequences
+4. Drag by title area to move out of the way
+5. Always accessible even with WoW fullscreen
+
 ### 🔮 Future Enhancements
 
 Possible additions:
@@ -239,5 +297,8 @@ Possible additions:
 - Sound effects on actions
 - Minimap-style thumbnail
 - Glow effects on active elements
+- Minimize/expand control panel
+- Keyboard shortcut display overlay
+- Real-time action counter
 
 Enjoy your new WoW-themed automation interface! ⚔️✨

@@ -167,9 +167,16 @@ class SettingsForm(tk.Tk):
 
         # NOW start global listener after all UI vars are created
         self._start_global_listener()
+        
+        # Show the control panel (always visible) - increased delay for stability
+        self.after(200, self._show_stop_window)
 
         # Poll thread state
         self.after(500, self._poll_status)
+        
+        # Handle window state changes to prevent control panel issues
+        self.bind("<Unmap>", self._on_minimize)
+        self.bind("<Map>", self._on_restore)
 
     def _build_ui(self):
         """Build the user interface."""
@@ -268,6 +275,9 @@ class SettingsForm(tk.Tk):
             highlightthickness=0
         )
         self.listbox.pack(side="left", fill="both", expand=True)
+        
+        # Bind selection change to update control panel
+        self.listbox.bind("<<ListboxSelect>>", lambda e: self._update_control_panel_sequences())
         
         # Scrollbar with custom styling
         scrollbar = tk.Scrollbar(listbox_container, orient="vertical", command=self.listbox.yview)
@@ -512,15 +522,43 @@ class SettingsForm(tk.Tk):
         self.status.config(text=f"Global listener restarted. Toggle key: {self.toggle_key_var.get()}")
 
     def _show_stop_window(self):
-        """Show the always-on-top STOP window."""
+        """Show the always-on-top control panel window."""
         if not self._stop_window:
-            self._stop_window = StopWindow(self.toggle_running)
+            self._stop_window = StopWindow(
+                stop_callback=self.toggle_running,
+                start_callback=self.toggle_running
+            )
+            # Update the control panel state based on current running status
+            if hasattr(self._stop_window, 'is_running'):
+                self._stop_window.is_running = self.is_running
+                self._stop_window._update_buttons()
+            # Update sequences display
+            self._update_control_panel_sequences()
 
     def _hide_stop_window(self):
         """Hide the STOP window."""
         if self._stop_window:
             self._stop_window.destroy()
             self._stop_window = None
+    
+    def _update_control_panel_sequences(self):
+        """Update the control panel with currently selected sequences."""
+        if self._stop_window:
+            selected = [self.sequence_names[i] for i in self.listbox.curselection()] if self.sequence_names else []
+            self._stop_window.update_sequences(selected)
+    
+    def _on_minimize(self, event):
+        """Handle main window minimize - keep control panel visible."""
+        if self._stop_window and self._stop_window.window.winfo_exists():
+            # Ensure control panel stays on top even when main window is minimized
+            self._stop_window.window.lift()
+            self._stop_window.window.attributes("-topmost", True)
+    
+    def _on_restore(self, event):
+        """Handle main window restore - ensure control panel is still on top."""
+        if self._stop_window and self._stop_window.window.winfo_exists():
+            self._stop_window.window.lift()
+            self._stop_window.window.attributes("-topmost", True)
 
     def browse_json(self):
         """Browse for JSON sequence file."""
@@ -560,6 +598,9 @@ class SettingsForm(tk.Tk):
             self.listbox.insert(tk.END, name)
 
         self.status.config(text=f"Loaded {len(seqs)} sequence(s) from file.")
+        
+        # Update control panel when sequences are loaded
+        self._update_control_panel_sequences()
 
     def open_save_dir(self):
         """Open the settings save directory."""
@@ -651,8 +692,15 @@ class SettingsForm(tk.Tk):
                 self._update_run_status()
                 self.thread_status_var.set("running")
                 
-                # Show the STOP window when running
-                self._show_stop_window()
+                # Update control panel state to show STOP is active
+                if self._stop_window:
+                    self._stop_window.is_running = True
+                    self._stop_window._update_buttons()
+                    # Update sequences display with what's running
+                    self._stop_window.update_sequences(selected)
+                
+                # Minimize main window when automation starts
+                self.iconify()
                 
                 self.status.config(text="Auto mode started! Press toggle key to stop.")
             except Exception as e:
@@ -668,8 +716,13 @@ class SettingsForm(tk.Tk):
                 self._update_run_status()
                 self.thread_status_var.set("stopped")
                 
-                # Hide the STOP window when stopped
-                self._hide_stop_window()
+                # Update control panel state to show START is active
+                if self._stop_window:
+                    self._stop_window.is_running = False
+                    self._stop_window._update_buttons()
+                
+                # Don't restore main window - keep it minimized
+                # User can manually restore if needed
                 
                 if exc:
                     self.status.config(text=f"Runner stopped with error: {exc}")
@@ -711,8 +764,10 @@ class SettingsForm(tk.Tk):
                     self._bg_runner = None
                     self.is_running = False
                     self._update_run_status()
-                    # Hide stop window if runner crashed
-                    self._hide_stop_window()
+                    # Update control panel to show START button if runner crashed
+                    if self._stop_window:
+                        self._stop_window.is_running = False
+                        self._stop_window._update_buttons()
         else:
             self.thread_status_var.set("stopped")
         self.after(500, self._poll_status)
